@@ -33,7 +33,7 @@ DPESolver::DPESolver(const Problem& problem,
                      CudaContext& cuda)
     : problem_(problem), view_(view), guidance_(guidance), reconstruction_(reconstruction), cuda_(cuda),
       params_(problem.params), width_(view.width), height_(view.height) {
-    params_.num_images = std::min(static_cast<int>(view.image_ids.size()), kMaxImages);
+    params_.num_images = static_cast<int>(view.image_ids.size());
     params_.depth_min = view.cameras.front().depth_min * 0.6f;
     params_.depth_max = view.cameras.front().depth_max * 1.2f;
 }

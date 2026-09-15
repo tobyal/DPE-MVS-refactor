@@ -8,12 +8,15 @@ __device__ inline float3 PointFromDepth(const Camera& cam,short2 p,float d){
     return make_float3(d*(p.x-cam.K[2])/cam.K[0],d*(p.y-cam.K[5])/cam.K[4],d);
 }
 
-__device__ inline bool SamePoint(short2 a,short2 b){return a.x==b.x&&a.y==b.y;}
+__device__ inline void AddCandidate(
+    short2 q,
+    short2* pts,
+    int* count) {
 
-__device__ inline void AddCandidate(short2 q, short2* pts, int* count){
-    if(q.x<0||q.y<0||*count>=64) return;
-    for(int i=0;i<*count;++i) if(SamePoint(pts[i],q)) return;
-    pts[(*count)++]=q;
+    if(q.x < 0 || q.y < 0 || *count >= 64)
+        return;
+
+    pts[(*count)++] = q;
 }
 
 __device__ inline bool CandidateEdgeAllowed(int2 center,short2 q,bool edge_limit,const DPEGpuContext* ctx){

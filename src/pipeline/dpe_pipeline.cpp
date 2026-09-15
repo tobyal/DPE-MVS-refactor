@@ -7,9 +7,67 @@
 #include <cmath>
 #include <chrono>
 #include <algorithm>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 
 namespace dpe {
+
+namespace {
+
+using Clock = std::chrono::steady_clock;
+
+std::string FormatDuration(std::chrono::milliseconds value) {
+    const auto total_seconds = value.count() / 1000;
+    const auto minutes = total_seconds / 60;
+    const auto seconds = total_seconds % 60;
+    std::ostringstream out;
+    out << std::setfill('0') << std::setw(2) << minutes << ':' << std::setw(2) << seconds;
+    return out.str();
+}
+
+std::string ProgressBar(int completed, int total) {
+    constexpr int width = 20;
+    const double ratio = total > 0 ? static_cast<double>(completed) / total : 1.0;
+    const int filled = std::max(0, std::min(width, static_cast<int>(ratio * width + 0.5)));
+    return '[' + std::string(filled, '#') + std::string(width - filled, '-') + ']';
+}
+
+std::string StageName(RunState state, int outer_refine) {
+    if (state == RunState::FirstInit) return "Coarse Init";
+    if (state == RunState::RefineInit) return "DPE Init";
+    return "PM Refine " + std::to_string(outer_refine + 1) + "/3";
+}
+
+void PrintStageProgress(const std::string& name, int completed, int total,
+                        const Clock::time_point& started) {
+    const auto now = Clock::now();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - started);
+    const int percent = total > 0 ? static_cast<int>((100.0 * completed / total) + 0.5) : 100;
+
+    std::cout << "\r  " << std::left << std::setw(16) << name << ' '
+              << ProgressBar(completed, total) << ' '
+              << std::right << std::setw(3) << percent << "%  "
+              << std::setw(3) << completed << '/' << total << "  "
+              << FormatDuration(elapsed);
+
+    if (completed > 0 && completed < total) {
+        const auto eta_ms = elapsed.count() * (total - completed) / completed;
+        std::cout << "  ETA " << FormatDuration(std::chrono::milliseconds(eta_ms));
+    }
+    std::cout << std::flush;
+}
+
+bool ShouldRefreshProgress(int completed, int total, int* last_bucket) {
+    if (completed == 0 || completed == total) return true;
+    if (total <= 20) return true;
+    const int bucket = static_cast<int>((100.0 * completed / total) / 5.0);
+    if (bucket <= *last_bucket) return false;
+    *last_bucket = bucket;
+    return true;
+}
+
+}  // namespace
 
 DPEPipeline::DPEPipeline(Scene& scene, ReconstructionState& reconstruction, CudaContext& cuda)
     : scene_(scene), reconstruction_(reconstruction), cuda_(cuda) {}
@@ -27,7 +85,6 @@ void DPEPipeline::PrepareGuidanceForLevel(std::vector<Problem>& problems, int le
 }
 
 void DPEPipeline::ProcessView(Problem& problem) {
-    const auto begin = std::chrono::steady_clock::now();
     SceneView view = scene_.MakeView(problem);
     // Keep the effective depth interval in the Problem as well as in the solver
     // so previews/checkpoints use the same range as PatchMatch.
@@ -38,17 +95,17 @@ void DPEPipeline::ProcessView(Problem& problem) {
     FrameState result = solver.Run();
     reconstruction_.Put(problem.ref_image_id, result);
     if (problem.show_medium_result) DumpDebug(problem, result);
-    const auto end = std::chrono::steady_clock::now();
-    std::cout << "view " << FormatIndex(problem.ref_image_id)
-              << " scale=" << problem.scale_size
-              << " iter=" << problem.iteration
-              << " time=" << std::chrono::duration_cast<std::chrono::milliseconds>(end-begin).count()
-              << " ms\n";
 }
 
 void DPEPipeline::RunPass(std::vector<Problem>& problems, int level, int outer_refine,
                           RunState state, bool geom_consistency) {
     const int scale = 1 << (pyramid_levels_ - 1 - level);
+    const std::string stage = StageName(state, outer_refine);
+    const auto started = Clock::now();
+    int completed = 0;
+    int last_bucket = 0;
+    PrintStageProgress(stage, completed, static_cast<int>(problems.size()), started);
+
     for (auto& problem : problems) {
         problem.scale_size = scale;
         problem.params.scale_size = scale;
@@ -73,7 +130,13 @@ void DPEPipeline::RunPass(std::vector<Problem>& problems, int level, int outer_r
             problem.params.weak_peak_radius = std::max(4 - 2 * outer_refine, 2);
         }
         ProcessView(problem);
+        ++completed;
+        if (ShouldRefreshProgress(completed, static_cast<int>(problems.size()), &last_bucket)) {
+            PrintStageProgress(stage, completed, static_cast<int>(problems.size()), started);
+        }
     }
+    PrintStageProgress(stage, completed, static_cast<int>(problems.size()), started);
+    std::cout << '\n';
 }
 
 void DPEPipeline::Run(std::vector<Problem>& problems) {
@@ -82,8 +145,23 @@ void DPEPipeline::Run(std::vector<Problem>& problems) {
     const int max_scale = 1 << (pyramid_levels_ - 1);
     for (auto& p : problems) p.params.max_scale_size = max_scale;
 
+    std::cout << "DPE-MVS Reconstruction\n"
+              << "Images : " << problems.size() << "\n"
+              << "Pyramid: " << pyramid_levels_ << " scales\n";
+
     int iteration = 0;
     for (int level = 0; level < pyramid_levels_; ++level) {
+        const int scale = 1 << (pyramid_levels_ - 1 - level);
+        const auto& ref = scene_.ScaledGrayFloat(problems.front().ref_image_id, scale);
+        const auto scale_started = Clock::now();
+
+        std::cout << "\n----------------------------------------\n"
+                  << "Scale " << (level + 1) << '/' << pyramid_levels_
+                  << " | 1/" << scale
+                  << " | " << ref.cols << 'x' << ref.rows << "\n"
+                  << "Views " << problems.size() << "\n"
+                  << "----------------------------------------\n";
+
         PrepareGuidanceForLevel(problems, level);
         for (auto& p : problems) p.iteration = iteration;
         RunPass(problems, level, -1,
@@ -96,7 +174,9 @@ void DPEPipeline::Run(std::vector<Problem>& problems) {
             RunPass(problems, level, refine, RunState::RefineIter, true);
             ++iteration;
         }
-        std::cout << "pyramid level " << level << " done\n";
+
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - scale_started);
+        std::cout << "Scale " << (level + 1) << " completed in " << FormatDuration(elapsed) << "\n";
     }
 }
 
