@@ -15,6 +15,8 @@ This package was reviewed against the official DPE-MVS implementation and the ex
 - Rechecked the official flow for initial photometric view selection, strong-path photometric evaluation, weak-path geometric consistency, the two RANSAC stages, adaptive patch radius, reliability classification, and final fusion.
 - Rechecked the high-resolution edge-crossing behavior: the coarsest fine-edge map is used as the low-resolution Bresenham map.
 - Perception Range Expansion uses the paper-consistent Eq. (4) clamp.
+- Diagnostics are opt-in through `DiagnosticSink`; normal runs perform no stage downloads or diagnostic I/O.
+- The default diagnostics policy limits full stage tracing to one view at the final scale/final pass while retaining pyramid summaries and Fusion Fate for all views.
 
 ## Important behavior notes
 
@@ -30,15 +32,9 @@ These cases should be kept in mind when comparing exact numerical output with th
 
 ## Build validation
 
-The complete `DPE` target was configured and compiled successfully on an NVIDIA RTX A6000 host with:
+The target machine configured and compiled the complete project successfully with CUDA 12.6,
+OpenCV, Boost, CMake Release mode, and `DPE_CUDA_ARCH=86`.
 
-```text
-CUDA compiler : 12.6.85
-CUDA arch     : 8.6
-OpenCV        : 4.5.4
-Boost         : 1.74
-C++ compiler  : GCC 11.4
-Build type    : Release
-```
-
-Compilation validates the refactored module boundaries and CUDA translation unit. Numerical validation should still start with one small ETH3D scene and a baseline comparison before large-scale experiments.
+A full ETH3D reconstruction was not launched as part of this code build. Before large-scale
+experiments, run one small scene and compare final depth statistics plus ETH3D 2 cm / 10 cm
+accuracy, completeness, and F1 against the current baseline.

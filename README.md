@@ -33,6 +33,7 @@ src/
 │       ├── reliability.cuh
 │       └── refinement.cuh
 ├── pipeline/               pyramid / init / refinement scheduling
+├── diagnostics/            optional stage snapshots, summaries, and fusion tracing
 └── fusion/                 final multi-view fusion
 ```
 
@@ -61,13 +62,16 @@ This removes file I/O as an internal communication mechanism. Intermediate files
 Requirements are the same family as the official project: CUDA, OpenCV, Boost filesystem/system, and CMake.
 
 ```bash
-bash scripts/build.sh
+mkdir -p build
+cd build
+cmake ..
+cmake --build . -j$(nproc)
 ```
 
 Set the CUDA architecture explicitly when needed, for example:
 
 ```bash
-DPE_CUDA_ARCH=89 bash scripts/build.sh
+cmake .. -DDPE_CUDA_ARCH=89
 ```
 
 ## Run
@@ -90,6 +94,57 @@ Choose a separate output directory with:
 
 By default the final point cloud is written to `<dense_folder>/DPE/DPE.ply`; with `--output`, it is written to `<output>/DPE.ply`.
 
+## Diagnostics
+
+Diagnostics are opt-in and do not add stage synchronization or artifact I/O to a normal run. Enable the default analysis directory with:
+
+```bash
+./build/DPE /path/to/dense_folder 0 --output=/path/to/output --diagnostics
+```
+
+Or choose a separate diagnostics root:
+
+```bash
+./build/DPE /path/to/dense_folder 0 --output=/path/to/output \
+    --diagnostics=/path/to/analysis
+```
+
+To keep ETH3D output bounded, internal stage snapshots are recorded only for the first reference view at the final scale and final PM pass. Select another deep-trace view with:
+
+```bash
+--diagnostic-view=17
+```
+
+Use `--diagnostic-view=all` only when full-view stage traces are intentionally required. Fusion fate is always recorded for every view, and final state is recorded once per pyramid level for every view.
+
+The first diagnostic schema follows the reconstruction chain from pyramid input to fusion:
+
+```text
+analysis/
+├── manifest.txt
+├── levels/
+│   └── scale_XX/ref_XXXXXXXX/
+│       ├── guidance/
+│       ├── pass_summary.csv
+│       └── pass_XXX_*/
+│           ├── stage_summary.csv
+│           ├── update_events.csv
+│           ├── stages/
+│           │   ├── input
+│           │   ├── strong / plane / weak per inner iteration
+│           │   └── finalized / filtered / classified / refined
+│           └── final_state/
+└── fusion/
+    ├── fusion_summary.csv
+    ├── ref_XXXXXXXX/fate.dmb
+    ├── ref_XXXXXXXX/support_count.dmb
+    └── point_{rgb,support,reliability,reference}.ply
+```
+
+Each stage stores dense depth, normal, reliability, matching cost, selected-view mask, adaptive radius, anchor count, and an update mask where applicable. Fusion fate codes are recorded in `manifest.txt`. Ground-truth-derived error/fix/break metrics are intentionally kept outside the normal reconstruction state and can be added as a separate analysis provider.
+
+See `DIAGNOSTICS.md` for the capture policy, artifact meanings, and Fusion Fate schema.
+
 ## Important validation step
 
-This is a structural refactor/reimplementation, so before using it for paper experiments, compare it against your current baseline on a small scene first. Recommended checks are final depth statistics and ETH3D 2 cm / 10 cm accuracy, completeness, and F1. The current branch has been compiled successfully with CUDA 12.6, OpenCV 4.5.4, Boost 1.74, and CUDA architecture 8.6. See `STATIC_CHECKS.md` for the completed audit and explicit behavior notes.
+This is a structural refactor/reimplementation, so before using it for paper experiments, compare it against your current baseline on a small scene first. Recommended checks are final depth statistics and ETH3D 2 cm / 10 cm accuracy, completeness, and F1. The project has been compiled with CUDA 12.6 on the target machine; a scene-level numerical comparison is still required. See `STATIC_CHECKS.md` for the completed audit and the explicit behavior notes.

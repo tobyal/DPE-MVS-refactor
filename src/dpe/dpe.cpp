@@ -30,8 +30,10 @@ DPESolver::DPESolver(const Problem& problem,
                      const SceneView& view,
                      const EdgeGuidanceHost& guidance,
                      ReconstructionState& reconstruction,
-                     CudaContext& cuda)
+                     CudaContext& cuda,
+                     DiagnosticSink* diagnostics)
     : problem_(problem), view_(view), guidance_(guidance), reconstruction_(reconstruction), cuda_(cuda),
+      diagnostics_(diagnostics),
       params_(problem.params), width_(view.width), height_(view.height) {
     params_.num_images = static_cast<int>(view.image_ids.size());
     params_.depth_min = view.cameras.front().depth_min * 0.6f;
@@ -185,10 +187,118 @@ FrameState DPESolver::DownloadResult() {
     return state;
 }
 
+void DPESolver::CaptureStage(DiagnosticStage stage, int inner_iteration) {
+    if (!diagnostics_) return;
+
+    const size_t count = static_cast<size_t>(width_) * height_;
+    const bool fitted_plane_stage = stage == DiagnosticStage::Plane;
+    const bool world_representation = stage == DiagnosticStage::Finalized ||
+                                      stage == DiagnosticStage::Filtered ||
+                                      stage == DiagnosticStage::Classified ||
+                                      stage == DiagnosticStage::Refined;
+    std::vector<float4> planes(count);
+    cv::Mat reliability(height_, width_, CV_8U);
+    cv::Mat cost(height_, width_, CV_32F);
+    cv::Mat selected_views(height_, width_, CV_32S);
+    cv::Mat radius(height_, width_, CV_32S);
+    cv::Mat anchor_count(height_, width_, CV_8U, cv::Scalar(0));
+    cv::Mat texture_complexity;
+
+    const auto stream = cuda_.Stream();
+    const float4* source_planes = fitted_plane_stage
+        ? host_gpu_.state.fitted_planes
+        : host_gpu_.state.planes;
+    DPE_CUDA_CHECK(cudaMemcpyAsync(planes.data(), source_planes,
+                                  sizeof(float4) * count, cudaMemcpyDeviceToHost, stream));
+    DPE_CUDA_CHECK(cudaMemcpyAsync(reliability.data, host_gpu_.state.reliability,
+                                  count, cudaMemcpyDeviceToHost, stream));
+    DPE_CUDA_CHECK(cudaMemcpyAsync(cost.data, host_gpu_.state.costs,
+                                  sizeof(float) * count, cudaMemcpyDeviceToHost, stream));
+    DPE_CUDA_CHECK(cudaMemcpyAsync(selected_views.data, host_gpu_.state.selected_views,
+                                  sizeof(unsigned int) * count, cudaMemcpyDeviceToHost, stream));
+    DPE_CUDA_CHECK(cudaMemcpyAsync(radius.data, host_gpu_.state.radius,
+                                  sizeof(int) * count, cudaMemcpyDeviceToHost, stream));
+
+    std::vector<short2> anchors;
+    if (weak_count_ > 0 && host_gpu_.state.anchors) {
+        anchors.resize(static_cast<size_t>(weak_count_) * kNeighbourNum);
+        DPE_CUDA_CHECK(cudaMemcpyAsync(anchors.data(), host_gpu_.state.anchors,
+                                      sizeof(short2) * anchors.size(),
+                                      cudaMemcpyDeviceToHost, stream));
+    }
+    if (stage == DiagnosticStage::Input) {
+        texture_complexity = cv::Mat(height_, width_, CV_32F);
+        DPE_CUDA_CHECK(cudaMemcpyAsync(texture_complexity.data,
+                                      host_gpu_.guidance.texture_complexity,
+                                      sizeof(float) * count, cudaMemcpyDeviceToHost, stream));
+    }
+    cuda_.Synchronize();
+
+    for (int y = 0; y < height_; ++y) {
+        for (int x = 0; x < width_; ++x) {
+            const int map = host_anchor_map_.at<int>(y, x);
+            if (map < 0 || anchors.empty()) continue;
+            unsigned char valid = 0;
+            for (int index = 1; index < kNeighbourNum; ++index) {
+                if (anchors[static_cast<size_t>(map) * kNeighbourNum + index].x >= 0) ++valid;
+            }
+            anchor_count.at<unsigned char>(y, x) = valid;
+        }
+    }
+
+    StageSnapshot snapshot;
+    snapshot.stage = stage;
+    snapshot.inner_iteration = inner_iteration;
+    snapshot.depth = cv::Mat(height_, width_, CV_32F, cv::Scalar(0));
+    snapshot.normal = cv::Mat(height_, width_, CV_32FC3, cv::Scalar(0, 0, 0));
+    snapshot.reliability = reliability;
+    snapshot.cost = cost;
+    snapshot.selected_views = selected_views;
+    snapshot.adaptive_radius = radius;
+    snapshot.anchor_count = anchor_count;
+    snapshot.texture_complexity = texture_complexity;
+
+    const Camera& camera = view_.cameras.front();
+    for (int y = 0; y < height_; ++y) {
+        for (int x = 0; x < width_; ++x) {
+            const float4 plane = planes[static_cast<size_t>(y) * width_ + x];
+            float depth = 0.0f;
+            cv::Vec3f normal;
+            if (world_representation) {
+                depth = plane.w;
+                normal = cv::Vec3f(plane.x, plane.y, plane.z);
+            } else {
+                const float denominator = (x - camera.K[2]) * plane.x +
+                    (camera.K[0] / camera.K[4]) * (y - camera.K[5]) * plane.y +
+                    camera.K[0] * plane.z;
+                if (std::fabs(denominator) > 1e-12f) {
+                    depth = -plane.w * camera.K[0] / denominator;
+                }
+                normal = cv::Vec3f(
+                    camera.R[0] * plane.x + camera.R[3] * plane.y + camera.R[6] * plane.z,
+                    camera.R[1] * plane.x + camera.R[4] * plane.y + camera.R[7] * plane.z,
+                    camera.R[2] * plane.x + camera.R[5] * plane.y + camera.R[8] * plane.z);
+            }
+            if (!std::isfinite(depth) || depth < params_.depth_min || depth > params_.depth_max) {
+                depth = 0.0f;
+            }
+            snapshot.depth.at<float>(y, x) = depth;
+            snapshot.normal.at<cv::Vec3f>(y, x) = normal;
+        }
+    }
+    diagnostics_->RecordStage(problem_, snapshot);
+}
+
 FrameState DPESolver::Run() {
     PrepareHostState();
     AllocateAndUpload();
-    RunDpeKernels(device_gpu_, cuda_.Stream(), params_, width_, height_);
+    KernelStageCallback callback;
+    if (diagnostics_ && diagnostics_->ShouldCaptureStages(problem_)) {
+        callback = [this](DiagnosticStage stage, int inner_iteration) {
+            CaptureStage(stage, inner_iteration);
+        };
+    }
+    RunDpeKernels(device_gpu_, cuda_.Stream(), params_, width_, height_, callback);
     FrameState result = DownloadResult();
     return result;
 }

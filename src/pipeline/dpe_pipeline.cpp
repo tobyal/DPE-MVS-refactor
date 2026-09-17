@@ -69,8 +69,9 @@ bool ShouldRefreshProgress(int completed, int total, int* last_bucket) {
 
 }  // namespace
 
-DPEPipeline::DPEPipeline(Scene& scene, ReconstructionState& reconstruction, CudaContext& cuda)
-    : scene_(scene), reconstruction_(reconstruction), cuda_(cuda) {}
+DPEPipeline::DPEPipeline(Scene& scene, ReconstructionState& reconstruction, CudaContext& cuda,
+                         DiagnosticSink* diagnostics)
+    : scene_(scene), reconstruction_(reconstruction), cuda_(cuda), diagnostics_(diagnostics) {}
 
 void DPEPipeline::PrepareGuidanceForLevel(std::vector<Problem>& problems, int level) {
     const int scale = 1 << (pyramid_levels_ - 1 - level);
@@ -80,7 +81,8 @@ void DPEPipeline::PrepareGuidanceForLevel(std::vector<Problem>& problems, int le
         guide_params.use_edge = true;
         guide_params.use_limit = true;
         guide_params.use_label = true;
-        scene_.Guidance(problem.ref_image_id, scale, guide_params);
+        const EdgeGuidanceHost& guidance = scene_.Guidance(problem.ref_image_id, scale, guide_params);
+        if (diagnostics_) diagnostics_->RecordGuidance(problem, scale, guidance);
     }
 }
 
@@ -91,8 +93,9 @@ void DPEPipeline::ProcessView(Problem& problem) {
     problem.params.depth_min = view.cameras.front().depth_min * 0.6f;
     problem.params.depth_max = view.cameras.front().depth_max * 1.2f;
     const EdgeGuidanceHost& guidance = scene_.Guidance(problem.ref_image_id, problem.scale_size, problem.params);
-    DPESolver solver(problem, view, guidance, reconstruction_, cuda_);
+    DPESolver solver(problem, view, guidance, reconstruction_, cuda_, diagnostics_);
     FrameState result = solver.Run();
+    if (diagnostics_) diagnostics_->RecordFinalState(problem, result);
     reconstruction_.Put(problem.ref_image_id, result);
     if (problem.show_medium_result) DumpDebug(problem, result);
 }
@@ -144,6 +147,7 @@ void DPEPipeline::Run(std::vector<Problem>& problems) {
     pyramid_levels_ = scene_.ComputePyramidLevels(problems);
     const int max_scale = 1 << (pyramid_levels_ - 1);
     for (auto& p : problems) p.params.max_scale_size = max_scale;
+    if (diagnostics_) diagnostics_->BeginRun(static_cast<int>(problems.size()), pyramid_levels_);
 
     std::cout << "DPE-MVS Reconstruction\n"
               << "Images : " << problems.size() << "\n"

@@ -7,14 +7,19 @@
 #include "scene/scene.h"
 #include "scene/reconstruction_state.h"
 #include "preprocessing/edge_detection.h"
+#include "diagnostics/diagnostic_sink.h"
 
+#include <functional>
 #include <memory>
 #include <vector>
 
 namespace dpe {
 
+using KernelStageCallback = std::function<void(DiagnosticStage, int)>;
+
 void RunDpeKernels(DPEGpuContext* device_context, cudaStream_t stream,
-                   const DPEParams& params, int width, int height);
+                   const DPEParams& params, int width, int height,
+                   const KernelStageCallback& stage_callback);
 
 class DPESolver {
 public:
@@ -22,7 +27,8 @@ public:
               const SceneView& view,
               const EdgeGuidanceHost& guidance,
               ReconstructionState& reconstruction,
-              CudaContext& cuda);
+              CudaContext& cuda,
+              DiagnosticSink* diagnostics = nullptr);
     ~DPESolver();
 
     FrameState Run();
@@ -31,6 +37,7 @@ private:
     void PrepareHostState();
     void AllocateAndUpload();
     FrameState DownloadResult();
+    void CaptureStage(DiagnosticStage stage, int inner_iteration);
     void ReleaseDevice();
 
     template <typename T>
@@ -45,6 +52,7 @@ private:
     const EdgeGuidanceHost& guidance_;
     ReconstructionState& reconstruction_;
     CudaContext& cuda_;
+    DiagnosticSink* diagnostics_ = nullptr;
 
     DPEParams params_;
     int width_ = 0;

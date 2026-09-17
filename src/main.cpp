@@ -3,19 +3,25 @@
 #include "runtime/cuda_context.h"
 #include "pipeline/dpe_pipeline.h"
 #include "fusion/fusion.h"
+#include "diagnostics/file_diagnostic_sink.h"
 
 #include <boost/filesystem.hpp>
 #include <iostream>
 #include <cstdlib>
 #include <string>
 #include <stdexcept>
+#include <memory>
 
 namespace {
 
 struct Options {
     int gpu_index = 0;
     bool debug = false;
+    bool diagnostics = false;
+    bool diagnostics_all_views = false;
+    int diagnostic_view = -1;
     boost::filesystem::path output;
+    boost::filesystem::path diagnostics_output;
 };
 
 Options ParseOptions(int argc, char** argv) {
@@ -30,6 +36,17 @@ Options ParseOptions(int argc, char** argv) {
         } else if (arg == "--output") {
             if (i + 1 >= argc) throw std::runtime_error("--output requires a path");
             options.output = argv[++i];
+        } else if (arg == "--diagnostics") {
+            options.diagnostics = true;
+        } else if (arg.rfind("--diagnostics=", 0) == 0) {
+            options.diagnostics = true;
+            options.diagnostics_output = arg.substr(14);
+        } else if (arg == "--diagnostic-view=all") {
+            options.diagnostics = true;
+            options.diagnostics_all_views = true;
+        } else if (arg.rfind("--diagnostic-view=", 0) == 0) {
+            options.diagnostics = true;
+            options.diagnostic_view = std::stoi(arg.substr(18));
         } else if (arg.rfind("--vis=", 0) == 0) {
             // `none` and `final` remain accepted for compatibility. `final`
             // currently writes the final reconstruction state only through fusion.
@@ -52,7 +69,8 @@ Options ParseOptions(int argc, char** argv) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::cerr << "Usage: DPE <dense_folder> [gpu_index] [--output=<folder>] [--debug]\n";
+        std::cerr << "Usage: DPE <dense_folder> [gpu_index] [--output=<folder>] "
+                     "[--debug] [--diagnostics[=<folder>]]\n";
         return EXIT_FAILURE;
     }
 
@@ -74,9 +92,25 @@ int main(int argc, char** argv) {
 
         dpe::ReconstructionState reconstruction;
         dpe::CudaContext cuda(options.gpu_index);
-        dpe::DPEPipeline pipeline(scene, reconstruction, cuda);
+        std::unique_ptr<dpe::FileDiagnosticSink> diagnostics;
+        if (options.diagnostics) {
+            const boost::filesystem::path diagnostics_root = options.diagnostics_output.empty()
+                ? output / "analysis"
+                : options.diagnostics_output;
+            const int diagnostic_view = options.diagnostic_view >= 0
+                ? options.diagnostic_view
+                : problems.front().ref_image_id;
+            diagnostics.reset(new dpe::FileDiagnosticSink(
+                diagnostics_root, diagnostic_view, options.diagnostics_all_views));
+            std::cout << "Diagnostics: " << diagnostics_root.string() << '\n';
+            std::cout << "Stage trace view: "
+                      << (options.diagnostics_all_views
+                          ? std::string("all")
+                          : std::to_string(diagnostic_view)) << '\n';
+        }
+        dpe::DPEPipeline pipeline(scene, reconstruction, cuda, diagnostics.get());
         pipeline.Run(problems);
-        dpe::RunFusion(scene, reconstruction, problems, output / "DPE.ply");
+        dpe::RunFusion(scene, reconstruction, problems, output / "DPE.ply", diagnostics.get());
 
         std::cout << "DPE.ply: " << (output / "DPE.ply").string() << '\n';
         return EXIT_SUCCESS;

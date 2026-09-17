@@ -26,6 +26,7 @@ add_executable(DPE
     src/dpe/dpe.cu
     src/pipeline/dpe_pipeline.cpp
     src/fusion/fusion.cpp
+    src/diagnostics/file_diagnostic_sink.cpp
 )
 
 target_include_directories(DPE PRIVATE
