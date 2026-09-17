@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dpe/modules/edge_guidance.cuh"
+#include "experiments/telemetry/gpu_telemetry.cuh"
 
 namespace dpe {
 
@@ -8,15 +9,13 @@ __device__ inline float3 PointFromDepth(const Camera& cam,short2 p,float d){
     return make_float3(d*(p.x-cam.K[2])/cam.K[0],d*(p.y-cam.K[5])/cam.K[4],d);
 }
 
-__device__ inline void AddCandidate(
-    short2 q,
-    short2* pts,
-    int* count) {
+__device__ inline bool SamePoint(short2 a,short2 b){return a.x==b.x&&a.y==b.y;}
 
-    if(q.x < 0 || q.y < 0 || *count >= 64)
-        return;
-
-    pts[(*count)++] = q;
+__device__ inline bool AddCandidate(short2 q, short2* pts, int* count){
+    if(q.x<0||q.y<0||*count>=64) return false;
+    for(int i=0;i<*count;++i) if(SamePoint(pts[i],q)) return false;
+    pts[(*count)++]=q;
+    return true;
 }
 
 __device__ inline bool CandidateEdgeAllowed(int2 center,short2 q,bool edge_limit,const DPEGpuContext* ctx){
@@ -72,7 +71,7 @@ __global__ void GenerateAnchorsKernel(DPEGpuContext* ctx){
                     if(q.x<0||q.y<0) continue;
                     float2 td=make_float2(q.x-p.x,q.y-p.y);Normalize2(&td);
                     if(td.x*dir.x+td.y*dir.y>cos_thresh && CandidateEdgeAllowed(p,q,edge_limit,ctx)){
-                        AddCandidate(q,candidates,&count); found=true; break;
+                        if(AddCandidate(q,candidates,&count)) TelemetryCandidate(ctx,center,q); found=true; break;
                     }
                 }
                 if(found) break;
@@ -111,7 +110,7 @@ __global__ void GenerateAnchorsKernel(DPEGpuContext* ctx){
                 qid=q.y*ctx->width+q.x;
                 const int qlabel=ctx->guidance.region_labels[qid];
                 if(qlabel!=0&&qlabel!=label) continue;
-                AddCandidate(q,candidates,&count);
+                if(AddCandidate(q,candidates,&count)) TelemetryCandidate(ctx,center,q);
             }
         }
     }
@@ -231,6 +230,7 @@ __global__ void GenerateAnchorsKernel(DPEGpuContext* ctx){
         used[best]=true; out[k]=candidates[best];
     }
     ctx->state.weak_reliable[center]=1;
+    TelemetryAnchors(ctx,center,map);
 }
 
 __global__ void UpdateUnreliableWeakKernel(DPEGpuContext* ctx){

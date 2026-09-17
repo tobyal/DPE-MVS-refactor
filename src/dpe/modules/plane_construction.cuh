@@ -127,8 +127,12 @@ __global__ void ConstructWeakPlaneKernel(DPEGpuContext* ctx){
         best.x=-best.x;best.y=-best.y;best.z=-best.z;best.w=-best.w;
     }
     ctx->state.fitted_planes[center]=best;
+    TelemetryPlane(ctx,p,best);
 
-    if(!ctx->params->use_radius)return;
+    if(!ctx->params->use_radius){
+        TelemetryRadiusViolation(ctx,p,ctx->params->strong_radius);
+        return;
+    }
     if(!must_in_triangle||best_a<0||best_b<0||best_c<0){
         ctx->state.radius[center]=ctx->params->strong_radius;
         return;
@@ -173,6 +177,7 @@ __global__ void ConstructWeakPlaneKernel(DPEGpuContext* ctx){
     }else{
         ctx->state.radius[center]=radius>ctx->params->strong_radius?radius:ctx->params->strong_radius;
     }
+    TelemetryRadiusViolation(ctx,p,ctx->state.radius[center]);
 
 }
 

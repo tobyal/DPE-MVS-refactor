@@ -1,1 +1,8 @@
 build/
+.venv-studio/
+studio/frontend/node_modules/
+studio/frontend/dist/
+
+__pycache__/
+*.py[cod]
+.DS_Store

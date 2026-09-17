@@ -88,13 +88,8 @@ SceneView Scene::MakeView(const Problem& problem) {
     view.scale_size = problem.scale_size;
     view.image_ids.push_back(problem.ref_image_id);
     for (int id : problem.src_image_ids) {
+        if (static_cast<int>(view.image_ids.size()) >= problem.params.num_images) break;
         view.image_ids.push_back(id);
-    }
-    if (static_cast<int>(view.image_ids.size()) > kMaxImages) {
-        throw std::runtime_error(
-            "Too many images for one DPE problem: " +
-            std::to_string(view.image_ids.size()) +
-            ", maximum is " + std::to_string(kMaxImages));
     }
     if (view.image_ids.size() < 2) throw std::runtime_error("Not enough source views");
     const cv::Mat& ref = ScaledGrayFloat(problem.ref_image_id, problem.scale_size);
