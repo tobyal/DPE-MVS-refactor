@@ -36,29 +36,6 @@ struct GpuGuidance {
     float* texture_complexity = nullptr;
 };
 
-
-struct GpuTelemetry {
-    bool enabled = false;
-    float* gt_depth = nullptr;
-    float3* gt_normal = nullptr;
-    unsigned char* gt_valid = nullptr;
-    unsigned char* gt_geometry_edge = nullptr;
-    int* gt_surface_label = nullptr;
-
-    int* es_candidate_count = nullptr;
-    int* es_same_surface = nullptr;
-    int* candidate_count = nullptr;
-    int* same_surface_candidates = nullptr;
-    unsigned char* anchor_count = nullptr;
-    unsigned char* same_surface_anchors = nullptr;
-    float* plane_depth_error = nullptr;
-    float* plane_normal_error = nullptr;
-    float* radius_violation = nullptr;
-    float* final_depth_error = nullptr;
-    float* matching_cost = nullptr;
-    int* adaptive_radius = nullptr;
-};
-
 struct DPEGpuContext {
     int width = 0;
     int height = 0;
@@ -72,7 +49,6 @@ struct DPEGpuContext {
 
     GpuPatchMatchState state;
     GpuGuidance guidance;
-    GpuTelemetry telemetry;
     DPEParams* params = nullptr;
 };
 

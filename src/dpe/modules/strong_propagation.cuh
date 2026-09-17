@@ -1,7 +1,6 @@
 #pragma once
 
 #include "dpe/modules/view_selection.cuh"
-#include "experiments/telemetry/gpu_telemetry.cuh"
 
 namespace dpe {
 
@@ -175,7 +174,6 @@ __device__ inline void StrongPropagation(int2 p,int iter,DPEGpuContext* ctx){
 
     if(ctx->params->use_edge)CollectEdgeGuidedCandidates(p,iter,positions,valid,cost_matrix,ctx);
     else CollectCheckerboardCandidates(p,positions,valid,cost_matrix,ctx);
-    TelemetryStrongCandidates(ctx,center,positions,valid);
 
     unsigned char weights[kMaxImages]={0};
     unsigned int mask=0;

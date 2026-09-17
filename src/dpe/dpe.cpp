@@ -30,11 +30,10 @@ DPESolver::DPESolver(const Problem& problem,
                      const SceneView& view,
                      const EdgeGuidanceHost& guidance,
                      ReconstructionState& reconstruction,
-                     CudaContext& cuda,
-                     const GroundTruthFrame* ground_truth)
-    : problem_(problem), view_(view), guidance_(guidance), reconstruction_(reconstruction), cuda_(cuda), ground_truth_(ground_truth),
+                     CudaContext& cuda)
+    : problem_(problem), view_(view), guidance_(guidance), reconstruction_(reconstruction), cuda_(cuda),
       params_(problem.params), width_(view.width), height_(view.height) {
-    params_.num_images = std::min(static_cast<int>(view.image_ids.size()), kMaxImages);
+    params_.num_images = static_cast<int>(view.image_ids.size());
     params_.depth_min = view.cameras.front().depth_min * 0.6f;
     params_.depth_max = view.cameras.front().depth_max * 1.2f;
 }
@@ -124,29 +123,6 @@ void DPESolver::AllocateAndUpload() {
     host_gpu_.guidance.texture_complexity = Allocate<float>(count);
     host_gpu_.guidance.region_boundaries = weak_count_ > 0 ? Allocate<short2>(static_cast<size_t>(weak_count_) * 8) : nullptr;
 
-    if (ground_truth_) {
-        if (ground_truth_->depth.size() != cv::Size(width_, height_))
-            throw std::runtime_error("Ground-truth frame size does not match solver view");
-        host_gpu_.telemetry.enabled = true;
-        host_gpu_.telemetry.gt_depth = Allocate<float>(count);
-        host_gpu_.telemetry.gt_normal = Allocate<float3>(count);
-        host_gpu_.telemetry.gt_valid = Allocate<unsigned char>(count);
-        host_gpu_.telemetry.gt_geometry_edge = Allocate<unsigned char>(count);
-        host_gpu_.telemetry.gt_surface_label = Allocate<int>(count);
-        host_gpu_.telemetry.es_candidate_count = Allocate<int>(count);
-        host_gpu_.telemetry.es_same_surface = Allocate<int>(count);
-        host_gpu_.telemetry.candidate_count = Allocate<int>(count);
-        host_gpu_.telemetry.same_surface_candidates = Allocate<int>(count);
-        host_gpu_.telemetry.anchor_count = Allocate<unsigned char>(count);
-        host_gpu_.telemetry.same_surface_anchors = Allocate<unsigned char>(count);
-        host_gpu_.telemetry.plane_depth_error = Allocate<float>(count);
-        host_gpu_.telemetry.plane_normal_error = Allocate<float>(count);
-        host_gpu_.telemetry.radius_violation = Allocate<float>(count);
-        host_gpu_.telemetry.final_depth_error = Allocate<float>(count);
-        host_gpu_.telemetry.matching_cost = Allocate<float>(count);
-        host_gpu_.telemetry.adaptive_radius = Allocate<int>(count);
-    }
-
     device_params_ = Allocate<DPEParams>(1);
     device_gpu_ = Allocate<DPEGpuContext>(1);
     host_gpu_.params = device_params_;
@@ -174,26 +150,6 @@ void DPESolver::AllocateAndUpload() {
     if (host_gpu_.guidance.region_boundaries)
         DPE_CUDA_CHECK(cudaMemsetAsync(host_gpu_.guidance.region_boundaries, 0xff, sizeof(short2) * weak_count_ * 8, stream));
 
-    if (ground_truth_) {
-        DPE_CUDA_CHECK(cudaMemcpyAsync(host_gpu_.telemetry.gt_depth, ground_truth_->depth.ptr<float>(), sizeof(float)*count, cudaMemcpyHostToDevice, stream));
-        DPE_CUDA_CHECK(cudaMemcpyAsync(host_gpu_.telemetry.gt_normal, ground_truth_->normal.ptr<cv::Vec3f>(), sizeof(float3)*count, cudaMemcpyHostToDevice, stream));
-        DPE_CUDA_CHECK(cudaMemcpyAsync(host_gpu_.telemetry.gt_valid, ground_truth_->valid.data, count, cudaMemcpyHostToDevice, stream));
-        DPE_CUDA_CHECK(cudaMemcpyAsync(host_gpu_.telemetry.gt_geometry_edge, ground_truth_->geometry_edge.data, count, cudaMemcpyHostToDevice, stream));
-        DPE_CUDA_CHECK(cudaMemcpyAsync(host_gpu_.telemetry.gt_surface_label, ground_truth_->surface_label.ptr<int>(), sizeof(int)*count, cudaMemcpyHostToDevice, stream));
-        DPE_CUDA_CHECK(cudaMemsetAsync(host_gpu_.telemetry.es_candidate_count, 0, sizeof(int)*count, stream));
-        DPE_CUDA_CHECK(cudaMemsetAsync(host_gpu_.telemetry.es_same_surface, 0, sizeof(int)*count, stream));
-        DPE_CUDA_CHECK(cudaMemsetAsync(host_gpu_.telemetry.candidate_count, 0, sizeof(int)*count, stream));
-        DPE_CUDA_CHECK(cudaMemsetAsync(host_gpu_.telemetry.same_surface_candidates, 0, sizeof(int)*count, stream));
-        DPE_CUDA_CHECK(cudaMemsetAsync(host_gpu_.telemetry.anchor_count, 0, count, stream));
-        DPE_CUDA_CHECK(cudaMemsetAsync(host_gpu_.telemetry.same_surface_anchors, 0, count, stream));
-        DPE_CUDA_CHECK(cudaMemsetAsync(host_gpu_.telemetry.plane_depth_error, 0, sizeof(float)*count, stream));
-        DPE_CUDA_CHECK(cudaMemsetAsync(host_gpu_.telemetry.plane_normal_error, 0, sizeof(float)*count, stream));
-        DPE_CUDA_CHECK(cudaMemsetAsync(host_gpu_.telemetry.radius_violation, 0, sizeof(float)*count, stream));
-        DPE_CUDA_CHECK(cudaMemsetAsync(host_gpu_.telemetry.final_depth_error, 0, sizeof(float)*count, stream));
-        DPE_CUDA_CHECK(cudaMemsetAsync(host_gpu_.telemetry.matching_cost, 0, sizeof(float)*count, stream));
-        DPE_CUDA_CHECK(cudaMemsetAsync(host_gpu_.telemetry.adaptive_radius, 0, sizeof(int)*count, stream));
-    }
-
     DPE_CUDA_CHECK(cudaMemcpyAsync(device_params_, &params_, sizeof(DPEParams), cudaMemcpyHostToDevice, stream));
     DPE_CUDA_CHECK(cudaMemcpyAsync(device_gpu_, &host_gpu_, sizeof(DPEGpuContext), cudaMemcpyHostToDevice, stream));
 }
@@ -207,81 +163,13 @@ FrameState DPESolver::DownloadResult() {
     DPE_CUDA_CHECK(cudaMemcpyAsync(planes.data(), host_gpu_.state.planes, sizeof(float4) * count, cudaMemcpyDeviceToHost, stream));
     DPE_CUDA_CHECK(cudaMemcpyAsync(reliability.data, host_gpu_.state.reliability, count, cudaMemcpyDeviceToHost, stream));
     DPE_CUDA_CHECK(cudaMemcpyAsync(views.data, host_gpu_.state.selected_views, sizeof(unsigned int) * count, cudaMemcpyDeviceToHost, stream));
-
-    FrameTelemetry telemetry;
-    std::vector<short2> telemetry_anchors;
-    std::vector<float4> telemetry_fitted_planes;
-    if (ground_truth_) {
-        telemetry.gt_depth = ground_truth_->depth.clone();
-        telemetry.gt_normal = ground_truth_->normal.clone();
-        telemetry.gt_valid = ground_truth_->valid.clone();
-        telemetry.gt_geometry_edge = ground_truth_->geometry_edge.clone();
-        telemetry.gt_surface_label = ground_truth_->surface_label.clone();
-        telemetry.fine_edge = guidance_.fine_edges.clone();
-        telemetry.coarse_region = guidance_.coarse_regions.clone();
-        telemetry.texture_complexity = cv::Mat(height_, width_, CV_32F);
-        telemetry.es_candidate_count = cv::Mat(height_, width_, CV_32S);
-        telemetry.es_same_surface = cv::Mat(height_, width_, CV_32S);
-        telemetry.candidate_count = cv::Mat(height_, width_, CV_32S);
-        telemetry.same_surface_candidates = cv::Mat(height_, width_, CV_32S);
-        telemetry.anchor_count = cv::Mat(height_, width_, CV_8U);
-        telemetry.same_surface_anchors = cv::Mat(height_, width_, CV_8U);
-        telemetry.fitted_plane_depth_error = cv::Mat(height_, width_, CV_32F);
-        telemetry.fitted_plane_normal_error = cv::Mat(height_, width_, CV_32F);
-        telemetry.radius_violation = cv::Mat(height_, width_, CV_32F);
-        telemetry.final_depth_error = cv::Mat(height_, width_, CV_32F);
-        telemetry.matching_cost = cv::Mat(height_, width_, CV_32F);
-        telemetry.adaptive_radius = cv::Mat(height_, width_, CV_32S);
-        DPE_CUDA_CHECK(cudaMemcpyAsync(telemetry.texture_complexity.ptr<float>(), host_gpu_.guidance.texture_complexity, sizeof(float)*count, cudaMemcpyDeviceToHost, stream));
-        DPE_CUDA_CHECK(cudaMemcpyAsync(telemetry.es_candidate_count.ptr<int>(), host_gpu_.telemetry.es_candidate_count, sizeof(int)*count, cudaMemcpyDeviceToHost, stream));
-        DPE_CUDA_CHECK(cudaMemcpyAsync(telemetry.es_same_surface.ptr<int>(), host_gpu_.telemetry.es_same_surface, sizeof(int)*count, cudaMemcpyDeviceToHost, stream));
-        DPE_CUDA_CHECK(cudaMemcpyAsync(telemetry.candidate_count.ptr<int>(), host_gpu_.telemetry.candidate_count, sizeof(int)*count, cudaMemcpyDeviceToHost, stream));
-        DPE_CUDA_CHECK(cudaMemcpyAsync(telemetry.same_surface_candidates.ptr<int>(), host_gpu_.telemetry.same_surface_candidates, sizeof(int)*count, cudaMemcpyDeviceToHost, stream));
-        DPE_CUDA_CHECK(cudaMemcpyAsync(telemetry.anchor_count.data, host_gpu_.telemetry.anchor_count, count, cudaMemcpyDeviceToHost, stream));
-        DPE_CUDA_CHECK(cudaMemcpyAsync(telemetry.same_surface_anchors.data, host_gpu_.telemetry.same_surface_anchors, count, cudaMemcpyDeviceToHost, stream));
-        DPE_CUDA_CHECK(cudaMemcpyAsync(telemetry.fitted_plane_depth_error.ptr<float>(), host_gpu_.telemetry.plane_depth_error, sizeof(float)*count, cudaMemcpyDeviceToHost, stream));
-        DPE_CUDA_CHECK(cudaMemcpyAsync(telemetry.fitted_plane_normal_error.ptr<float>(), host_gpu_.telemetry.plane_normal_error, sizeof(float)*count, cudaMemcpyDeviceToHost, stream));
-        DPE_CUDA_CHECK(cudaMemcpyAsync(telemetry.radius_violation.ptr<float>(), host_gpu_.telemetry.radius_violation, sizeof(float)*count, cudaMemcpyDeviceToHost, stream));
-        DPE_CUDA_CHECK(cudaMemcpyAsync(telemetry.final_depth_error.ptr<float>(), host_gpu_.telemetry.final_depth_error, sizeof(float)*count, cudaMemcpyDeviceToHost, stream));
-        DPE_CUDA_CHECK(cudaMemcpyAsync(telemetry.matching_cost.ptr<float>(), host_gpu_.telemetry.matching_cost, sizeof(float)*count, cudaMemcpyDeviceToHost, stream));
-        DPE_CUDA_CHECK(cudaMemcpyAsync(telemetry.adaptive_radius.ptr<int>(), host_gpu_.telemetry.adaptive_radius, sizeof(int)*count, cudaMemcpyDeviceToHost, stream));
-        if (weak_count_ > 0 && host_gpu_.state.anchors) {
-            telemetry_anchors.resize(static_cast<size_t>(weak_count_) * kNeighbourNum);
-            telemetry_fitted_planes.resize(count);
-            DPE_CUDA_CHECK(cudaMemcpyAsync(telemetry_anchors.data(), host_gpu_.state.anchors, sizeof(short2)*telemetry_anchors.size(), cudaMemcpyDeviceToHost, stream));
-            DPE_CUDA_CHECK(cudaMemcpyAsync(telemetry_fitted_planes.data(), host_gpu_.state.fitted_planes, sizeof(float4)*count, cudaMemcpyDeviceToHost, stream));
-        }
-    }
     cuda_.Synchronize();
-
-    if (ground_truth_ && weak_count_ > 0 && !telemetry_anchors.empty()) {
-        telemetry.anchors.reserve(weak_count_);
-        telemetry.planes.reserve(weak_count_);
-        for (int y = 0; y < height_; ++y) {
-            for (int x = 0; x < width_; ++x) {
-                const int map = host_anchor_map_.at<int>(y,x);
-                if (map < 0 || map >= weak_count_) continue;
-                AnchorRecord ar; ar.pixel_index = y*width_ + x;
-                for (int k = 1; k < kNeighbourNum; ++k) {
-                    const short2 q = telemetry_anchors[static_cast<size_t>(map)*kNeighbourNum+k];
-                    ar.xy[(k-1)*2] = q.x; ar.xy[(k-1)*2+1] = q.y;
-                }
-                telemetry.anchors.push_back(ar);
-                const float4 fp = telemetry_fitted_planes[static_cast<size_t>(y)*width_+x];
-                PlaneRecord pr; pr.pixel_index = ar.pixel_index;
-                pr.plane[0]=fp.x; pr.plane[1]=fp.y; pr.plane[2]=fp.z; pr.plane[3]=fp.w;
-                pr.radius = telemetry.adaptive_radius.at<int>(y,x);
-                telemetry.planes.push_back(pr);
-            }
-        }
-    }
 
     FrameState state;
     state.depth = cv::Mat(height_, width_, CV_32F);
     state.normal = cv::Mat(height_, width_, CV_32FC3);
     state.reliability = reliability;
     state.selected_views = views;
-    state.telemetry = std::move(telemetry);
     for (int y = 0; y < height_; ++y) {
         for (int x = 0; x < width_; ++x) {
             const float4 p = planes[static_cast<size_t>(y) * width_ + x];

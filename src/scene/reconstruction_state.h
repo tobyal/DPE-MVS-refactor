@@ -2,7 +2,6 @@
 
 #include <opencv2/opencv.hpp>
 #include <unordered_map>
-#include "experiments/telemetry/telemetry.h"
 
 namespace dpe {
 
@@ -11,7 +10,6 @@ struct FrameState {
     cv::Mat normal;          // CV_32FC3, world coordinates
     cv::Mat reliability;     // CV_8U, PixelState
     cv::Mat selected_views;  // CV_32S bit mask
-    FrameTelemetry telemetry;
 
     bool Empty() const { return depth.empty(); }
 };

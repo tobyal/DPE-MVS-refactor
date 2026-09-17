@@ -1,38 +1,44 @@
-# Static validation report
+# Static audit status
 
-## Completed
+This package was reviewed against the official DPE-MVS implementation and the existing `DPE-MVS-fast` runtime changes before packaging.
 
-- Verified all quoted local C++/CUDA includes resolve under `src/`.
-- Checked balanced `()`, `[]`, and `{}` after lexically removing C/C++ comments, string literals, and character literals.
-- Python backend passes `python -m py_compile`.
-- Backend DMB random-access reader smoke-tested with synthetic CV_32F/CV_8U matrices.
-- Sparse `anchors.bin` and `planes.bin` readers smoke-tested with synthetic records.
-- FastAPI application construction smoke-tested; routes are registered successfully.
-- Experiment output paths remain case-isolated.
-- GT telemetry is disabled for ordinary `DPE` and only attached through `DPEExperiment`.
-- Baseline-only telemetry default prevents all ablation cases from paying GT telemetry cost unless `--telemetry-all` is requested.
+## Checks completed
 
-## Environment limitations
+- Source delimiter balance (`{}`, `()`, `[]`) across all `.cpp/.h/.cu/.cuh` files.
+- All project-local `#include "..."` paths resolve.
+- Every source listed in `CMakeLists.txt` exists.
+- `scripts/build.sh` passes `bash -n`.
+- CUDA allocation/free calls are confined to `runtime/gpu_workspace.cu`; texture lifetime is confined to `runtime/gpu_scene.cu`.
+- DPE algorithm/runtime layers contain no disk I/O calls.
+- Normal execution does not call `cudaDeviceSynchronize()` after every kernel; kernel ordering uses one CUDA stream, with stream synchronization only at host result/lifetime boundaries. `DPE_DEBUG_SYNC` can restore per-kernel synchronization for debugging.
+- Active pyramid images/guidance are bounded to one scale at a time; raw scene images/cameras and the compact coarsest fine-edge maps persist across scales.
+- Rechecked the official flow for initial photometric view selection, strong-path photometric evaluation, weak-path geometric consistency, the two RANSAC stages, adaptive patch radius, reliability classification, and final fusion.
+- Rechecked the high-resolution edge-crossing behavior: the coarsest fine-edge map is used as the low-resolution Bresenham map.
+- Perception Range Expansion uses the paper-consistent Eq. (4) clamp.
 
-- `nvcc` is not installed in this execution environment, so CUDA compilation was not executed here.
-- OpenCV C++ development headers/pkg-config are not installed here, so host C++ compilation was not executed here.
-- Frontend dependency installation was not performed because package download/network access is unavailable in this runtime.
+## Important behavior notes
 
-## Required first server-side validation
+The goal is algorithmic fidelity with a cleaner architecture, not bitwise identity with every incidental behavior of the released source. A few defensive choices are explicit:
 
-Run on the CUDA server:
+- Eq. (4) uses `max(1, min(2*eta-1, raw))` instead of the released source's reversed clamp.
+- Cost arrays are explicitly filled with their intended sentinel values rather than relying on partial aggregate initialization.
+- Selected-view bit removal clears only the requested bit.
+- Joint-view selection has a uniform fallback if its probability mass degenerates to zero, preventing a NaN CDF.
+- Checkerboard launch coverage includes the final row for odd image heights.
 
-```bash
-cmake -S . -B build -DDPE_CUDA_ARCH=86
-cmake --build build -j
+These cases should be kept in mind when comparing exact numerical output with the released executable.
+
+## Build validation
+
+The complete `DPE` target was configured and compiled successfully on an NVIDIA RTX A6000 host with:
+
+```text
+CUDA compiler : 12.6.85
+CUDA arch     : 8.6
+OpenCV        : 4.5.4
+Boost         : 1.74
+C++ compiler  : GCC 11.4
+Build type    : Release
 ```
 
-Then start with one small ETH3D scene and the baseline telemetry case. Inspect:
-
-1. aligned GT point cloud overlaps the DPE cameras and reconstruction;
-2. GT depth is non-zero on expected scan-visible pixels;
-3. image-edge / GT-edge relation map is geometrically plausible;
-4. anchor markers and fitted planes appear at the selected weak pixel;
-5. telemetry summary has non-zero GT-valid pixels and finite plane/depth statistics.
-
-Only after this geometry sanity check should the full experiment suite be used for quantitative conclusions.
+Compilation validates the refactored module boundaries and CUDA translation unit. Numerical validation should still start with one small ETH3D scene and a baseline comparison before large-scale experiments.

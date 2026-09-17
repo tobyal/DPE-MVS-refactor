@@ -7,7 +7,6 @@
 #include "scene/scene.h"
 #include "scene/reconstruction_state.h"
 #include "preprocessing/edge_detection.h"
-#include "experiments/ground_truth/ground_truth_provider.h"
 
 #include <memory>
 #include <vector>
@@ -23,8 +22,7 @@ public:
               const SceneView& view,
               const EdgeGuidanceHost& guidance,
               ReconstructionState& reconstruction,
-              CudaContext& cuda,
-              const GroundTruthFrame* ground_truth = nullptr);
+              CudaContext& cuda);
     ~DPESolver();
 
     FrameState Run();
@@ -47,7 +45,6 @@ private:
     const EdgeGuidanceHost& guidance_;
     ReconstructionState& reconstruction_;
     CudaContext& cuda_;
-    const GroundTruthFrame* ground_truth_ = nullptr;
 
     DPEParams params_;
     int width_ = 0;

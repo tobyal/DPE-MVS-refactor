@@ -13,7 +13,6 @@
 #include "dpe/modules/weak_propagation.cuh"
 #include "dpe/modules/refinement.cuh"
 #include "dpe/modules/reliability.cuh"
-#include "experiments/telemetry/gpu_telemetry.cuh"
 
 namespace dpe {
 
@@ -64,8 +63,6 @@ void RunDpeKernels(DPEGpuContext* ctx, cudaStream_t stream,
     ClassifyReliabilityKernel<<<grid_full,block_full,0,stream>>>(ctx);
     DPE_KERNEL_CHECK(stream);
     LocalRefineKernel<<<grid_full,block_full,0,stream>>>(ctx);
-    DPE_KERNEL_CHECK(stream);
-    FinalTelemetryKernel<<<grid_full,block_full,0,stream>>>(ctx);
     DPE_KERNEL_CHECK(stream);
 }
 
