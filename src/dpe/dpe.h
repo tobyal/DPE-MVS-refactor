@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/types.h"
+#include "diagnostics/reliability_study.h"
 #include "dpe/gpu_types.cuh"
 #include "runtime/cuda_context.h"
 #include "runtime/gpu_scene.h"
@@ -14,7 +15,8 @@
 namespace dpe {
 
 void RunDpeKernels(DPEGpuContext* device_context, cudaStream_t stream,
-                   const DPEParams& params, int width, int height);
+                   const DPEParams& params, int width, int height,
+                   ReliabilityStudyCapture* reliability_capture);
 
 class DPESolver {
 public:
@@ -22,7 +24,9 @@ public:
               const SceneView& view,
               const EdgeGuidanceHost& guidance,
               ReconstructionState& reconstruction,
-              CudaContext& cuda);
+              CudaContext& cuda,
+              ReliabilityStudyWriter* reliability_study = nullptr,
+              const ReliabilityStudyStage* reliability_stage = nullptr);
     ~DPESolver();
 
     FrameState Run();
@@ -45,6 +49,8 @@ private:
     const EdgeGuidanceHost& guidance_;
     ReconstructionState& reconstruction_;
     CudaContext& cuda_;
+    ReliabilityStudyWriter* reliability_study_ = nullptr;
+    ReliabilityStudyStage reliability_stage_;
 
     DPEParams params_;
     int width_ = 0;

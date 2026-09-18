@@ -16,6 +16,7 @@ option(DPE_DEBUG_DUMP "Write intermediate debug results" OFF)
 add_executable(DPE
     src/main.cpp
     src/common/io.cpp
+    src/diagnostics/reliability_study.cpp
     src/scene/scene.cpp
     src/scene/reconstruction_state.cpp
     src/preprocessing/edge_detection.cpp

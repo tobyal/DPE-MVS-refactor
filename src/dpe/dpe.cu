@@ -17,7 +17,8 @@
 namespace dpe {
 
 void RunDpeKernels(DPEGpuContext* ctx, cudaStream_t stream,
-                   const DPEParams& params, int width, int height) {
+                   const DPEParams& params, int width, int height,
+                   ReliabilityStudyCapture* reliability_capture) {
     const dim3 block_full(16,16);
     const dim3 grid_full((width+15)/16,(height+15)/16);
     const dim3 block_half(32,16);
@@ -60,10 +61,16 @@ void RunDpeKernels(DPEGpuContext* ctx, cudaStream_t stream,
     DPE_KERNEL_CHECK(stream);
     StrongFilterRedKernel<<<grid_half,block_half,0,stream>>>(ctx);
     DPE_KERNEL_CHECK(stream);
+    if(reliability_capture)
+        reliability_capture->CapturePre(stream);
     ClassifyReliabilityKernel<<<grid_full,block_full,0,stream>>>(ctx);
     DPE_KERNEL_CHECK(stream);
+    if(reliability_capture)
+        reliability_capture->CaptureReliability(stream);
     LocalRefineKernel<<<grid_full,block_full,0,stream>>>(ctx);
     DPE_KERNEL_CHECK(stream);
+    if(reliability_capture)
+        reliability_capture->CapturePost(stream);
 }
 
 }  // namespace dpe

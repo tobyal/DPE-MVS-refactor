@@ -1,6 +1,7 @@
 #include "pipeline/dpe_pipeline.h"
 #include "dpe/dpe.h"
 #include "common/io.h"
+#include "diagnostics/reliability_study.h"
 
 #include <boost/filesystem.hpp>
 #include <iostream>
@@ -69,8 +70,10 @@ bool ShouldRefreshProgress(int completed, int total, int* last_bucket) {
 
 }  // namespace
 
-DPEPipeline::DPEPipeline(Scene& scene, ReconstructionState& reconstruction, CudaContext& cuda)
-    : scene_(scene), reconstruction_(reconstruction), cuda_(cuda) {}
+DPEPipeline::DPEPipeline(Scene& scene, ReconstructionState& reconstruction, CudaContext& cuda,
+                         ReliabilityStudyWriter* reliability_study)
+    : scene_(scene), reconstruction_(reconstruction), cuda_(cuda),
+      reliability_study_(reliability_study) {}
 
 void DPEPipeline::PrepareGuidanceForLevel(std::vector<Problem>& problems, int level) {
     const int scale = 1 << (pyramid_levels_ - 1 - level);
@@ -84,14 +87,27 @@ void DPEPipeline::PrepareGuidanceForLevel(std::vector<Problem>& problems, int le
     }
 }
 
-void DPEPipeline::ProcessView(Problem& problem) {
+void DPEPipeline::ProcessView(Problem& problem, int level, int outer_refine) {
     SceneView view = scene_.MakeView(problem);
     // Keep the effective depth interval in the Problem as well as in the solver
     // so previews/checkpoints use the same range as PatchMatch.
     problem.params.depth_min = view.cameras.front().depth_min * 0.6f;
     problem.params.depth_max = view.cameras.front().depth_max * 1.2f;
     const EdgeGuidanceHost& guidance = scene_.Guidance(problem.ref_image_id, problem.scale_size, problem.params);
-    DPESolver solver(problem, view, guidance, reconstruction_, cuda_);
+    ReliabilityStudyStage stage;
+    stage.global_iteration = problem.iteration;
+    stage.pyramid_level = level;
+    stage.scale = problem.scale_size;
+    stage.run_state = problem.params.state;
+    stage.outer_refine = problem.params.state == RunState::RefineIter ? outer_refine + 1 : -1;
+    stage.ref_image_id = problem.ref_image_id;
+    stage.depth_min = problem.params.depth_min;
+    stage.depth_max = problem.params.depth_max;
+    stage.use_apd = problem.params.use_apd;
+    stage.use_edge = problem.params.use_edge;
+    stage.geom_consistency = problem.params.geom_consistency;
+    DPESolver solver(problem, view, guidance, reconstruction_, cuda_, reliability_study_,
+                     reliability_study_ ? &stage : nullptr);
     FrameState result = solver.Run();
     reconstruction_.Put(problem.ref_image_id, result);
     if (problem.show_medium_result) DumpDebug(problem, result);
@@ -129,7 +145,7 @@ void DPEPipeline::RunPass(std::vector<Problem>& problems, int level, int outer_r
             problem.params.rotate_time = std::min(1 << level, 4);
             problem.params.weak_peak_radius = std::max(4 - 2 * outer_refine, 2);
         }
-        ProcessView(problem);
+        ProcessView(problem, level, outer_refine);
         ++completed;
         if (ShouldRefreshProgress(completed, static_cast<int>(problems.size()), &last_bucket)) {
             PrintStageProgress(stage, completed, static_cast<int>(problems.size()), started);

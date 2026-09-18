@@ -14,6 +14,7 @@ Source basis:
 src/
 ├── main.cpp
 ├── common/                 basic types, camera/bin I/O, CUDA checks
+├── diagnostics/            optional reliability-study capture and output
 ├── scene/                  input scene + in-memory reconstruction state
 ├── preprocessing/          fine edge / coarse region construction
 ├── runtime/                CUDA stream, pooled buffers/arrays, GPU scene textures
@@ -93,6 +94,25 @@ Choose a separate output directory with:
 
 By default the final point cloud is written to `<dense_folder>/DPE/DPE.ply`; with `--output`, it is written to `<output>/DPE.ply`.
 
+## Reliability evolution study
+
+Enable pass-level instrumentation explicitly:
+
+```bash
+./build/DPE /path/to/dense_folder 0 \
+  --output=/path/to/output \
+  --reliability-study
+```
+
+For every reference view and every coarse-to-fine pass, this records geometry
+after the strong depth filter, reliability immediately after classification,
+and geometry after local refinement. Output is placed in
+`<output>/reliability_study`. Normal runs do not create study output or perform
+the study's extra device transfers and synchronizations.
+
+GT evaluation is intentionally offline. See `RELIABILITY_STUDY.md` for the
+stage schema and `scripts/analyze_reliability.py` usage.
+
 ## Important validation step
 
-This is a structural refactor/reimplementation, so before using it for paper experiments, compare it against your current baseline on a small scene first. Recommended checks are final depth statistics and ETH3D 2 cm / 10 cm accuracy, completeness, and F1. The execution environment used to prepare this package does not contain a CUDA/OpenCV C++ development toolchain, so an actual `nvcc` build could not be run here. See `STATIC_CHECKS.md` for the completed static audit and the explicit behavior notes.
+This is a structural refactor/reimplementation, so before using it for paper experiments, compare it against your current baseline on a small scene first. Recommended checks are final depth statistics and ETH3D 2 cm / 10 cm accuracy, completeness, and F1. See `STATIC_CHECKS.md` for the completed static audit and the explicit behavior notes.

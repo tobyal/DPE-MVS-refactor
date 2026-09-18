@@ -3,18 +3,21 @@
 #include "runtime/cuda_context.h"
 #include "pipeline/dpe_pipeline.h"
 #include "fusion/fusion.h"
+#include "diagnostics/reliability_study.h"
 
 #include <boost/filesystem.hpp>
 #include <iostream>
 #include <cstdlib>
 #include <string>
 #include <stdexcept>
+#include <memory>
 
 namespace {
 
 struct Options {
     int gpu_index = 0;
     bool debug = false;
+    bool reliability_study = false;
     boost::filesystem::path output;
 };
 
@@ -25,6 +28,8 @@ Options ParseOptions(int argc, char** argv) {
         const std::string arg(argv[i]);
         if (arg == "--debug" || arg == "--vis=all") {
             options.debug = true;
+        } else if (arg == "--reliability-study") {
+            options.reliability_study = true;
         } else if (arg.rfind("--output=", 0) == 0) {
             options.output = arg.substr(9);
         } else if (arg == "--output") {
@@ -52,7 +57,8 @@ Options ParseOptions(int argc, char** argv) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::cerr << "Usage: DPE <dense_folder> [gpu_index] [--output=<folder>] [--debug]\n";
+        std::cerr << "Usage: DPE <dense_folder> [gpu_index] [--output=<folder>] [--debug] "
+                     "[--reliability-study]\n";
         return EXIT_FAILURE;
     }
 
@@ -74,7 +80,13 @@ int main(int argc, char** argv) {
 
         dpe::ReconstructionState reconstruction;
         dpe::CudaContext cuda(options.gpu_index);
-        dpe::DPEPipeline pipeline(scene, reconstruction, cuda);
+        std::unique_ptr<dpe::ReliabilityStudyWriter> reliability_study;
+        if (options.reliability_study) {
+            const auto study_root = output / "reliability_study";
+            reliability_study.reset(new dpe::ReliabilityStudyWriter(study_root));
+            std::cout << "Reliability study: " << study_root.string() << '\n';
+        }
+        dpe::DPEPipeline pipeline(scene, reconstruction, cuda, reliability_study.get());
         pipeline.Run(problems);
         dpe::RunFusion(scene, reconstruction, problems, output / "DPE.ply");
 

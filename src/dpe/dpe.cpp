@@ -30,8 +30,12 @@ DPESolver::DPESolver(const Problem& problem,
                      const SceneView& view,
                      const EdgeGuidanceHost& guidance,
                      ReconstructionState& reconstruction,
-                     CudaContext& cuda)
+                     CudaContext& cuda,
+                     ReliabilityStudyWriter* reliability_study,
+                     const ReliabilityStudyStage* reliability_stage)
     : problem_(problem), view_(view), guidance_(guidance), reconstruction_(reconstruction), cuda_(cuda),
+      reliability_study_(reliability_study),
+      reliability_stage_(reliability_stage ? *reliability_stage : ReliabilityStudyStage()),
       params_(problem.params), width_(view.width), height_(view.height) {
     params_.num_images = static_cast<int>(view.image_ids.size());
     params_.depth_min = view.cameras.front().depth_min * 0.6f;
@@ -188,7 +192,14 @@ FrameState DPESolver::DownloadResult() {
 FrameState DPESolver::Run() {
     PrepareHostState();
     AllocateAndUpload();
-    RunDpeKernels(device_gpu_, cuda_.Stream(), params_, width_, height_);
+    std::unique_ptr<ReliabilityStudyCapture> reliability_capture;
+    if (reliability_study_)
+        reliability_capture.reset(new ReliabilityStudyCapture(
+            width_, height_, host_gpu_.state.planes, host_gpu_.state.reliability));
+    RunDpeKernels(device_gpu_, cuda_.Stream(), params_, width_, height_,
+                  reliability_capture.get());
+    if (reliability_capture)
+        reliability_study_->Write(reliability_stage_, reliability_capture->Snapshot());
     FrameState result = DownloadResult();
     return result;
 }

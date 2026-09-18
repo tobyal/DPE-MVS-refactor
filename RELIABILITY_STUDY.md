@@ -1,0 +1,160 @@
+# DPE reliability evolution study
+
+This mode is instrumentation only. It does not change reliability
+classification, PatchMatch, propagation, RANSAC, plane construction, local
+refinement, pyramid scheduling, or fusion. Without `--reliability-study`, no
+study writer is created and no additional device copy or synchronization is
+performed.
+
+## Capture boundaries
+
+Every pyramid pass captures three states:
+
+```text
+FinalizeDepthNormal
+StrongFilterBlack
+StrongFilterRed
+    -> depth_pre / normal_pre
+ClassifyReliability
+    -> reliability
+LocalRefine
+    -> depth_post / normal_post
+```
+
+`normal_pre` and `normal_post` are both retained even though the current local
+refinement kernel only changes depth. Normals are exported in world
+coordinates.
+
+The pipeline assigns one global stage per pass. With three pyramid levels this
+produces `S00` through `S11`; other pyramid depths produce the corresponding
+dynamic number of stages. A directory name also contains the zero-based level
+and pass name, for example:
+
+```text
+S00_L00_coarse_init
+S01_L00_refine1
+S04_L01_dpe_init
+```
+
+## Run
+
+```bash
+./build/DPE /path/to/dense_folder 0 \
+  --output=/path/to/output \
+  --reliability-study
+```
+
+Results are written below:
+
+```text
+<output>/reliability_study/
+  ref_<8-digit-id>/
+    Sxx_Lxx_<pass>/
+      depth_pre.dmb
+      depth_pre.png
+      normal_pre.dmb
+      normal_pre.png
+      reliability.bin
+      reliability.png
+      depth_post.dmb
+      depth_post.png
+      normal_post.dmb
+      normal_post.png
+      stage.json
+```
+
+`reliability.bin` uses the same versioned OpenCV-matrix binary header as other
+DPE `.dmb`/`.bin` files. Reliability values are `WEAK=0`, `STRONG=1`, and
+`UNKNOWN=2`. `outer_refine` in `stage.json` is `-1` for init passes and `1..3`
+for refinement passes.
+
+## Offline GT analysis
+
+The analysis script expects per-view GT depth, optional GT normal, and optional
+valid mask already aligned with each reference camera. It does not project or
+reclassify ETH3D point clouds.
+
+Default file discovery supports layouts such as:
+
+```text
+<gt_root>/ref_<id>/gt_depth.dmb
+<gt_root>/ref_<id>/gt_normal.dmb
+<gt_root>/ref_<id>/valid_mask.dmb
+<gt_root>/views/<id>/gt_depth.dmb
+```
+
+Custom layouts can use `--gt-depth-pattern`, `--gt-normal-pattern`, and
+`--gt-mask-pattern`; patterns may contain `{gt_root}`, `{ref_id}`, and
+`{ref_id8}`.
+
+```bash
+python3 scripts/analyze_reliability.py \
+  --study-root /path/to/output/reliability_study \
+  --gt-root /path/to/aligned_gt \
+  --depth-thresholds 0.02 0.10 \
+  --normal-thresholds 5 10 20 \
+  --depth-correct-threshold 0.02 \
+  --normal-correct-threshold 10 \
+  --depth-error-vmax 0.10 \
+  --normal-error-vmax 30
+```
+
+If GT normals are unavailable, derive them from aligned GT depth and the DPE
+camera files:
+
+```bash
+python3 scripts/analyze_reliability.py \
+  --study-root /path/to/output/reliability_study \
+  --gt-root /path/to/aligned_gt \
+  --derive-gt-normals \
+  --camera-root /path/to/dense_folder
+```
+
+The default angular metric uses signed `dot(n_pred, n_gt)`. Use
+`--normal-sign-mode unsigned` only when the supplied GT convention is genuinely
+sign-ambiguous; the selected convention is recorded in `analysis_config.json`.
+Use `--gt-normal-coordinates camera --camera-root ...` when supplied normals
+are in camera coordinates.
+
+The script writes:
+
+```text
+analysis/
+  analysis_config.json
+  metrics/per_stage.csv
+  metrics/per_view.csv
+  metrics/summary.csv
+  plots/depth_evolution.png
+  plots/normal_evolution.png
+  plots/reliability_evolution.png
+  plots/geometry_vs_reliability.png
+  plots/strong_vs_weak_depth_error.png
+  plots/strong_vs_weak_normal_error.png
+  plots/strong_vs_weak_depth_correctness.png
+  plots/strong_vs_weak_normal_correctness.png
+  plots/strong_vs_weak_joint_correctness.png
+  maps/ref_.../S.../
+```
+
+Reliability correctness always uses pre-classification geometry. UNKNOWN is
+reported separately and never merged into STRONG or WEAK. Disable per-stage
+error maps with `--skip-error-maps` when only CSVs and trend plots are needed.
+
+Each stage analysis directory includes reliability-conditioned continuous maps
+(`strong_depth_error.png`, `weak_depth_error.png`,
+`strong_normal_error.png`, and `weak_normal_error.png`), binary correctness
+maps for STRONG/WEAK depth and normal, and fixed-color four-class maps:
+
+```text
+reliability_vs_depth_gt.png
+reliability_vs_normal_gt.png
+reliability_vs_joint_gt.png
+```
+
+Continuous maps use the configured fixed maxima and include colorbars in meters
+or degrees, so colors remain comparable across all stages and reference views.
+Four-class maps distinguish STRONG+Correct, STRONG+Wrong, WEAK+Correct, and
+WEAK+Wrong; UNKNOWN and invalid GT share a neutral ignored color.
+
+The correctness options also accept the earlier aliases
+`--reliability-depth-threshold` and `--reliability-normal-threshold`.
