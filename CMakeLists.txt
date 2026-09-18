@@ -64,3 +64,30 @@ set_target_properties(DPE PROPERTIES
     CUDA_SEPARABLE_COMPILATION OFF
     CUDA_ARCHITECTURES "${DPE_CUDA_ARCH}"
 )
+
+add_executable(eth3d_projection
+    tools/eth3d_projection/main.cpp
+    tools/eth3d_projection/ply_reader.cpp
+    tools/eth3d_projection/projection.cpp
+    src/common/io.cpp
+)
+
+target_include_directories(eth3d_projection PRIVATE
+    ${OpenCV_INCLUDE_DIRS}
+    ${Boost_INCLUDE_DIRS}
+    ${CUDAToolkit_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/eth3d_projection
+)
+
+target_link_libraries(eth3d_projection PRIVATE
+    ${OpenCV_LIBS}
+    ${Boost_LIBRARIES}
+)
+
+target_compile_options(eth3d_projection PRIVATE
+    -O3
+    -Wall
+    -Wextra
+    -Wno-unused-parameter
+)

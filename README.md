@@ -95,4 +95,34 @@ By default the final point cloud is written to `<dense_folder>/DPE/DPE.ply`; wit
 
 ## Important validation step
 
-This is a structural refactor/reimplementation, so before using it for paper experiments, compare it against your current baseline on a small scene first. Recommended checks are final depth statistics and ETH3D 2 cm / 10 cm accuracy, completeness, and F1. The execution environment used to prepare this package does not contain a CUDA/OpenCV C++ development toolchain, so an actual `nvcc` build could not be run here. See `STATIC_CHECKS.md` for the completed static audit and the explicit behavior notes.
+This is a structural refactor/reimplementation, so before using it for paper experiments, compare it against your current baseline on a small scene first. Recommended checks are final depth statistics and ETH3D 2 cm / 10 cm accuracy, completeness, and F1. See `STATIC_CHECKS.md` for the completed static audit and the explicit behavior notes.
+
+## ETH3D evaluation projection
+
+`eth3d_projection` is an independent visualization tool for the colored PLY files produced by
+the official `ETH3DMultiViewEvaluation` executable. It does not call or modify DPE, PatchMatch,
+or fusion, and it does not recompute Accuracy or Completeness labels.
+
+```bash
+./build/eth3d_projection \
+  --dense-folder /path/to/dense_folder \
+  --output /path/to/projection_output \
+  --accuracy-2cm /path/to/accuracy.tolerance_0.02.ply \
+  --accuracy-10cm /path/to/accuracy.tolerance_0.1.ply \
+  --completeness-2cm /path/to/completeness.tolerance_0.02.ply \
+  --completeness-10cm /path/to/completeness.tolerance_0.1.ply
+```
+
+The tool reads reference image IDs from `pair.txt`, reuses the project's camera parser, applies
+`X_cam = R * X_world + t`, projects with the complete 3x3 intrinsic matrix, and resolves visibility
+with an independent per-view Z-buffer. The default circular splat radius is 2 pixels and the
+default overlay alpha is 0.7. Use `--radius`, `--alpha`, and `--threads` to override them.
+
+Only the requested PNG directories are created:
+
+```text
+accuracy_2cm/<id>.png
+accuracy_10cm/<id>.png
+completeness_2cm/<id>.png
+completeness_10cm/<id>.png
+```
