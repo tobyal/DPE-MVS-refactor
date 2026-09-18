@@ -156,6 +156,11 @@ The default output is
 `--view 0` and `--view ref_00000000` are accepted. The command reports any
 stage image that has not been generated yet.
 
+Raw snapshot images such as `reliability.png` live directly below the study
+root instead of `analysis/maps`. Select them with
+`--source-root /path/to/reliability_study`; comparison output is still written
+below the supplied analysis root.
+
 The script writes:
 
 ```text

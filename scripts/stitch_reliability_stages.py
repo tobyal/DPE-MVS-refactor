@@ -21,6 +21,14 @@ def parse_args():
         help="Reliability analysis directory containing maps/.",
     )
     parser.add_argument(
+        "--source-root",
+        type=Path,
+        help=(
+            "Directory containing ref_<id>/S* stage folders. Defaults to "
+            "<analysis-root>/maps; use the reliability_study root for reliability.png."
+        ),
+    )
+    parser.add_argument(
         "--view",
         required=True,
         help="Reference id, for example 0, 00000000, or ref_00000000.",
@@ -80,7 +88,8 @@ def main():
     args = parse_args()
     reference = normalize_view(args.view)
     image_name = normalize_image_name(args.image_name)
-    view_root = args.analysis_root / "maps" / reference
+    source_root = args.source_root or (args.analysis_root / "maps")
+    view_root = source_root / reference
 
     stage_directories = [find_stage_directory(view_root, stage) for stage in STAGES]
     input_paths = [directory / image_name for directory in stage_directories]
