@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Join one reliability-analysis image from S00, S04, S08, and S11."""
+"""Join one reliability image from six scale-boundary stages."""
 
 import argparse
 from pathlib import Path
@@ -7,12 +7,12 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 
-STAGES = ("S00", "S04", "S08", "S11")
+STAGES = ("S00", "S03", "S04", "S07", "S08", "S11")
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Horizontally join one map from reliability stages S00/S04/S08/S11."
+        description="Horizontally join one map from stages S00/S03/S04/S07/S08/S11."
     )
     parser.add_argument(
         "--analysis-root",
@@ -28,10 +28,15 @@ def parse_args():
             "<analysis-root>/maps; use the reliability_study root for reliability.png."
         ),
     )
-    parser.add_argument(
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument(
         "--view",
-        required=True,
         help="Reference id, for example 0, 00000000, or ref_00000000.",
+    )
+    selection.add_argument(
+        "--all-views",
+        action="store_true",
+        help="Generate one comparison image for every ref_<id> below the source root.",
     )
     parser.add_argument(
         "--image-name",
@@ -48,6 +53,8 @@ def parse_args():
     args = parser.parse_args()
     if args.gap < 0 or args.label_height < 0:
         parser.error("--gap and --label-height must be non-negative")
+    if args.all_views and args.output is not None:
+        parser.error("--output can only be used together with --view")
     return args
 
 
@@ -75,6 +82,17 @@ def find_stage_directory(view_root, stage):
     return matches[0]
 
 
+def find_references(source_root):
+    references = sorted(
+        path.name
+        for path in source_root.glob("ref_*")
+        if path.is_dir() and path.name[4:].isdigit()
+    )
+    if not references:
+        raise FileNotFoundError(f"No ref_<id> directories found below {source_root}")
+    return references
+
+
 def load_font(size):
     for name in ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf"):
         try:
@@ -84,11 +102,7 @@ def load_font(size):
     return ImageFont.load_default()
 
 
-def main():
-    args = parse_args()
-    reference = normalize_view(args.view)
-    image_name = normalize_image_name(args.image_name)
-    source_root = args.source_root or (args.analysis_root / "maps")
+def stitch_view(args, source_root, reference, image_name):
     view_root = source_root / reference
 
     stage_directories = [find_stage_directory(view_root, stage) for stage in STAGES]
@@ -102,6 +116,17 @@ def main():
     for path in input_paths:
         with Image.open(path) as image:
             images.append(image.convert("RGB"))
+
+    target_height = max(image.height for image in images)
+    images = [
+        image.resize(
+            (round(image.width * target_height / image.height), target_height),
+            Image.Resampling.NEAREST,
+        )
+        if image.height != target_height
+        else image
+        for image in images
+    ]
 
     canvas_width = sum(image.width for image in images) + args.gap * (len(images) - 1)
     canvas_height = args.label_height + max(image.height for image in images)
@@ -131,13 +156,23 @@ def main():
             args.analysis_root
             / "comparisons"
             / reference
-            / f"{stem}_S00_S04_S08_S11.png"
+            / f"{stem}_{'_'.join(STAGES)}.png"
         )
     output.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(output)
     print(f"Written: {output}")
-    for stage, path in zip(STAGES, input_paths):
-        print(f"  {stage}: {path}")
+    if not args.all_views:
+        for stage, path in zip(STAGES, input_paths):
+            print(f"  {stage}: {path}")
+
+
+def main():
+    args = parse_args()
+    image_name = normalize_image_name(args.image_name)
+    source_root = args.source_root or (args.analysis_root / "maps")
+    references = find_references(source_root) if args.all_views else [normalize_view(args.view)]
+    for reference in references:
+        stitch_view(args, source_root, reference, image_name)
 
 
 if __name__ == "__main__":

@@ -141,8 +141,8 @@ sign-ambiguous; the selected convention is recorded in `analysis_config.json`.
 Use `--gt-normal-coordinates camera --camera-root ...` when supplied normals
 are in camera coordinates.
 
-To compare the major scale/stage boundaries for one reference view, join the
-same analysis map from `S00`, `S04`, `S08`, and `S11`:
+To compare the start and end of each pyramid scale for one reference view, join
+the same analysis map from `S00`, `S03`, `S04`, `S07`, `S08`, and `S11`:
 
 ```bash
 python3 scripts/stitch_reliability_stages.py \
@@ -152,9 +152,13 @@ python3 scripts/stitch_reliability_stages.py \
 ```
 
 The default output is
-`<analysis-root>/comparisons/ref_<id>/<image>_S00_S04_S08_S11.png`. Both
+`<analysis-root>/comparisons/ref_<id>/<image>_S00_S03_S04_S07_S08_S11.png`. Both
 `--view 0` and `--view ref_00000000` are accepted. The command reports any
 stage image that has not been generated yet.
+
+Use `--all-views` instead of `--view <id>` to generate one comparison for every
+reference view. Lower-resolution stage images are enlarged to the highest stage
+height with nearest-neighbor sampling before composition.
 
 Raw snapshot images such as `reliability.png` live directly below the study
 root instead of `analysis/maps`. Select them with
