@@ -87,6 +87,29 @@ Custom layouts can use `--gt-depth-pattern`, `--gt-normal-pattern`, and
 `--gt-mask-pattern`; patterns may contain `{gt_root}`, `{ref_id}`, and
 `{ref_id8}`.
 
+Official ETH3D GT consists of local `scan*.ply` files plus the global scan poses
+in `scan_alignment.mlp`. Convert it once into camera-aligned depth maps with:
+
+```bash
+python3 scripts/prepare_eth3d_gt.py \
+  --dense-folder /path/to/dense_folder \
+  --ground-truth-mlp /path/to/dslr_scan_eval/scan_alignment.mlp \
+  --output /path/to/aligned_gt
+```
+
+The converter applies each MLP `global_T_mesh`, projects through the DPE camera
+definition (`X_cam = R * X_world + t` and the complete 3x3 `K`), and resolves
+visibility with a per-camera Z-buffer. It writes only:
+
+```text
+<aligned_gt>/ref_<8-digit-id>/gt_depth.dmb
+```
+
+The default `--splat-radius 0` preserves the official scan sampling. A positive
+radius can increase valid-pixel coverage, but it also spreads laser samples
+across object boundaries and should be recorded with the experiment. Use
+`--view <id>` for a one-view alignment check before converting the full scene.
+
 ```bash
 python3 scripts/analyze_reliability.py \
   --study-root /path/to/output/reliability_study \
@@ -110,7 +133,9 @@ python3 scripts/analyze_reliability.py \
   --camera-root /path/to/dense_folder
 ```
 
-The default angular metric uses signed `dot(n_pred, n_gt)`. Use
+Derived normals are oriented toward the reference camera, matching DPE's plane
+normal convention, and are then transformed to world coordinates. The default
+angular metric uses signed `dot(n_pred, n_gt)`. Use
 `--normal-sign-mode unsigned` only when the supplied GT convention is genuinely
 sign-ambiguous; the selected convention is recorded in `analysis_config.json`.
 Use `--gt-normal-coordinates camera --camera-root ...` when supplied normals

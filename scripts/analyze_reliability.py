@@ -192,6 +192,9 @@ def derive_world_normals(depth, valid, intrinsic, rotation):
     dx = points[1:-1, 2:] - points[1:-1, :-2]
     dy = points[2:, 1:-1] - points[:-2, 1:-1]
     camera_normal = np.cross(dx, dy)
+    view_direction = points[1:-1, 1:-1]
+    facing_away = np.sum(camera_normal * view_direction, axis=2) > 0.0
+    camera_normal[facing_away] *= -1.0
     world_normal = camera_normal @ rotation
     result = np.zeros((height, width, 3), dtype=np.float32)
     result[1:-1, 1:-1] = world_normal.astype(np.float32)
